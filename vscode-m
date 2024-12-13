@@ -1,0 +1,334 @@
+#!/bin/bash
+
+# Constantes
+CONFIG_FILE=".r3md-rc"
+DB_FILE="$HOME/bin/scripts/extensions.info"
+VERBOSE=false
+EXECUTE=true
+INCLUDE_DEFAULT=true
+AVAILABLE_MODULES=("BASE" "REGULAR" "DOCKER" "DRAW" "GIT" "GO" "JS" "PROJECT" "PYTHON" "INFRA" "SECURITY" "SHARED" "THEME" "WORKSPACE" "IA")
+DEFAULT_MODULES="BASE REGULAR DRAW GIT PROJECT THEME"  # Módulos padrão que sempre serão incluídos
+DISABLE_ALL_MODULES=false
+DIR_PATH="."
+PREFIX_MESSAGE=""
+
+# Cores para o terminal
+BLACK='\033[0;30m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+ORANGE='\033[0;33m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+GRAY='\033[0;37m'
+WHITE='\033[1;37m'
+BOLD='\033[1m'
+LIGHT_YELLOW='\033[0;93m'
+LIGHT_CYAN='\033[0;96m'
+NC='\033[0m' # No Color
+
+# Função para mostrar o cabeçalho
+show_header() {
+    echo -e "${BLUE}"
+    echo '┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓'
+    echo -e "┃                                                                ┃"
+    echo -e "┃      ${WHITE}██╗   ██╗███████╗    ██████╗ ██████╗ ██████╗ ███████╗${BLUE}     ┃"
+    echo -e "┃      ${WHITE}██║   ██║██╔════╝   ██╔════╝██╔═══██╗██╔══██╗██╔════╝${BLUE}     ┃"
+    echo -e "┃      ${WHITE}██║   ██║███████╗   ██║     ██║   ██║██║  ██║█████╗  ${BLUE}     ┃"
+    echo -e "┃      ${WHITE}╚██╗ ██╔╝╚════██║   ██║     ██║   ██║██║  ██║██╔══╝  ${BLUE}     ┃"
+    echo -e "┃       ${WHITE}╚████╔╝ ███████║   ╚██████╗╚██████╔╝██████╔╝███████╗${BLUE}     ┃"
+    echo -e "┃        ${WHITE}╚═══╝  ╚══════╝    ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝${BLUE}     ┃"
+    echo -e "┃                                                                ┃"
+    echo -e "┃                     ${GREEN}Module Manager ${LIGHT_YELLOW}v1.0.0                      ${BLUE}┃"
+    echo -e "┃                                                                ┃"
+    echo '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛'
+    echo -e "${NC}"
+}
+
+# Adicione a chamada da função logo após as definições de constantes:
+show_header
+
+# Função para mostrar ajuda
+show_help() {
+    echo -e "\nUso: $(basename $0) [-h] [-l] [-v] [-s] [-d] [-c] [-n]  [-r]  [módulo1 módulo2 ...]"
+    echo "Opções:"
+    echo "  -h  Mostra ajuda"
+    echo "  -l  Lista todos os módulos de extensões disponíveis para inclusão"
+    echo "  -v  Modo verbose (mostra detalhes da execução)"
+    echo "  -s  Não executa o comando, apenas mostra mostra uma simulação"
+    echo "  -d  Desabilita a inclusão de módulos de extensões padrão ($DEFAULT_MODULES)"
+    echo "  -c  Ignora todos os módulos de extensões e executa 'code .'"
+    echo "  -n  Nova instancia com módulo extensões básico"
+    echo "  -r  Nova instancia sem nenhuma extensão"
+    echo ""
+    echo "Se os módulos forem especificados via CLI, eles substituirão os do arquivo $CONFIG_FILE"
+    exit 0
+}
+
+list_modules() {
+    echo -e "${CYAN}● Módulos de extensões disponíveis para inclusão:${NC}"
+    for module in "${AVAILABLE_MODULES[@]}"; do
+        echo -e "${GRAY}    ○ $module${NC}"
+    done
+    exit 0
+}
+
+# Função para mostrar mensagens no modo verbose (usando stderr)
+log_verbose() {
+    local message="$1"
+    local color="${2:-$CYAN}"    # Cor padrão: CYAN
+    local indent="${3:-0}"       # Indentação padrão: 0
+
+    if [ "$VERBOSE" = true ]; then
+        # Cria a indentação baseada no número de tabs
+        local tabs=""
+        for ((i=0; i<indent; i++)); do
+            tabs="    $tabs"  # 4 espaços por tab
+        done
+
+        echo -e "${color}${tabs}● ${message}${NC}" >&2
+    fi
+}
+
+log() {
+    local message="$1"
+    local color="${2:-$CYAN}"    # Cor padrão: CYAN
+    local indent="${3:-0}"       # Indentação padrão: 0
+
+    # Cria a indentação baseada no número de tabs
+    local tabs=""
+    for ((i=0; i<indent; i++)); do
+        tabs="    $tabs"  # 4 espaços por tab
+    done
+
+    echo -e "${color}${tabs}${message}${NC}" >&2
+}
+
+# Função para mostrar erro e sair
+error_exit() {
+    local message="$1"
+    local indent="${2:-0}"       # Indentação padrão: 0
+    local tabs=""
+
+    # Cria a indentação baseada no número de tabs
+    for ((i=0; i<indent; i++)); do
+        tabs="    $tabs"  # 4 espaços por tab
+    done
+
+    echo -e "${RED}${tabs}✖ Erro: ${message}${NC}" >&2
+    exit 1
+}
+
+# Função para obter todas as extensões do database
+get_all_plugins() {
+    log_verbose "Obtendo lista completa de plugins..." "$CYAN" 0
+    cut -d'|' -f1 "$DB_FILE" | sort -u
+}
+
+# Função para verificar pré-requisitos
+check_prerequisites() {
+    log_verbose "Verificando pré-requisitos..."
+
+    # Verifica se o VSCode está instalado
+    command -v code >/dev/null 2>&1 || error_exit "VSCode não está instalado" 1
+
+    # Verifica se o database existe
+    [ -f "$DB_FILE" ] || error_exit "Database de extensões não encontrado em $DB_FILE" 1
+
+    log_verbose "Todos os pré-requisitos atendidos" "$GREEN" 1
+}
+
+# Função para obter módulos do arquivo de configuração
+get_file_modules() {
+    if [ -f "$CONFIG_FILE" ]; then
+        tr -d '[:space:]' < "$CONFIG_FILE" | tr ',' ' '
+    fi
+}
+
+# Função para obter e processar módulos finais
+get_modules() {
+    local cli_modules="$1"
+    local modules=""
+
+    # Prioriza módulos do CLI se existirem
+    if [ -n "$cli_modules" ]; then
+        log_verbose "Usando módulos do CLI: ${GRAY}${cli_modules[*]}${NC}"
+        modules="$cli_modules"
+    else
+        modules=$(get_file_modules)
+        log_verbose "Usando módulos do arquivo: ${GRAY}${modules[*]}${NC}"
+    fi
+
+    # Verifica se há módulos
+    if [ -z "$modules" ]; then
+        log_verbose "Nenhum módulo especificado (via CLI ou arquivo)" "$GREEN" 1
+    fi
+
+    # Adiciona módulos padrão se necessário
+    if [ "$INCLUDE_DEFAULT" = true ]; then
+        log_verbose "Adicionando módulos padrão: ${GRAY}$DEFAULT_MODULES${NC}" "$GREEN"  1
+        modules="$modules $DEFAULT_MODULES"
+    else
+        log_verbose "Ignorando módulos padrão" "$GREEN" 1
+    fi
+
+    # Remove duplicatas e retorna
+    echo "$modules" | tr ' ' '\n' | sort -u | tr '\n' ' '
+}
+
+# Função para validar módulos
+validate_modules() {
+    local modules=($1)
+    log_verbose "Validando módulos: ${GRAY}${modules[*]}${NC}"
+
+    for module in "${modules[@]}"; do
+        if ! grep -q "|${module}\$" "$DB_FILE"; then
+            error_exit "Módulo '$module' não encontrado no database"
+        fi
+    done
+}
+
+# Função para obter plugins a serem desabilitados
+get_plugins_to_disable() {
+    local modules=($1)
+    local active_plugins=""
+    local all_plugins=""
+
+    log_verbose "Obtendo lista de plugins..."
+
+    # Obtém todos os plugins
+    all_plugins=$(cut -d'|' -f1 "$DB_FILE" | sort -u)
+
+    # Obtém plugins dos módulos ativos
+    for module in "${modules[@]}"; do
+        log_verbose "Processando plugins do módulo: ${NC}${GRAY}$module${NC}" "$CYAN" 1
+        active_plugins="$active_plugins $(grep "|${module}\$" "$DB_FILE" | cut -d'|' -f1)"
+    done
+
+    # Filtra plugins a serem desabilitados
+    local plugins_to_disable=""
+    for plugin in $all_plugins; do
+        if [[ ! $active_plugins =~ $plugin ]]; then
+            plugins_to_disable="$plugins_to_disable $plugin"
+        fi
+    done
+
+    echo "$plugins_to_disable"
+}
+
+# Função para construir e executar o comando
+build_and_run_command() {
+    local plugins=($1)
+
+    if [ ${#plugins[@]} -eq 0 ]; then
+        error_exit "Nenhum plugin para desabilitar encontrado"
+        exit 0
+    fi
+
+    log_verbose "Iniciando construção do comando para desabilitar módulos:"
+    local command="code"
+    for plugin in "${plugins[@]}"; do
+        [ -z "$plugin" ] && continue
+        command="$command --disable-extension $plugin"
+        log_verbose "Plugin: ${NC}${GRAY}$plugin${NC}" "$CYAN" 1
+    done
+    command="$command $DIR_PATH"
+
+    # echo "Comando construído:" >&2
+    # echo "$command" >&2
+
+    if [ "$EXECUTE" = true ]; then
+        echo -e "\n${GREEN}★ Executando comando...${NC}\n"
+        eval "$command"
+    else
+        echo -e "\n${PURPLE}☆ Modo simulação - comando não executado.${NC}\n"
+    fi
+}
+
+# Processa as opções da linha de comando
+while getopts "hlvsdcnr" opt; do
+    case $opt in
+        h)
+            log "✴ Exibindo ajuda..." "${BLUE}"
+            show_help
+            ;;
+        l)
+            log "✴ Listando Módulos de extensões disponíveis..." "${BLUE}"
+            list_modules
+            ;;
+        v)
+            log "✴ Modo verbose ativado..." "${BLUE}"
+            VERBOSE=true
+            ;;
+        s)
+            log "✴ Modo simulado ativado..." "${BLUE}"
+            EXECUTE=false
+            ;;
+        d)
+            log "✴ Ignorando módulos padrão..." "${BLUE}"
+            INCLUDE_DEFAULT=false
+            ;;
+        c)
+            log "✴ Modo de desativação total dos modulos de extensões..." "${BLUE}"
+            DISABLE_ALL_MODULES=true
+            ;;
+        n)
+            log "✴ Nova instancia com extensões básica..." "${BLUE}"
+            DEFAULT_MODULES="BASE"
+            DIR_PATH="-n"
+            ;;
+        r)
+            log "✴ Nova instancia sem extensões..." "${BLUE}"
+            DISABLE_ALL_MODULES=true
+            DIR_PATH="-n"
+            ;;
+        \?)
+            log "\n✴ Opção inválida..." "${RED}"
+            log "✴ Exibindo ajuda..." "${BLUE}"
+            show_help
+            ;;
+    esac
+done
+
+# Remove as opções processadas, deixando apenas os argumentos posicionais (módulos)
+shift $((OPTIND-1))
+CLI_MODULES="$*"
+
+echo -e "\n\n${LIGHT_YELLOW}✦ Iniciando script...${NC}\n"
+
+# Fluxo principal
+check_prerequisites
+
+if [ "$DISABLE_ALL_MODULES" = true ]; then
+    log_verbose "Desabilitando todas as extensões" "$CYAN" 0
+    log_verbose "Modo de desativação total ativado" "$GREEN" 1
+
+    # Obtém todas as extensões do database
+    ALL_PLUGINS=$(get_all_plugins)
+
+    build_and_run_command "$ALL_PLUGINS"
+    exit 0
+fi
+
+# Obtém e valida os módulos
+MODULES=$(get_modules "$CLI_MODULES")
+validate_modules "$MODULES"
+
+if [ -n "$CLI_MODULES" ]; then
+    log_verbose "Usando módulos do CLI (override)"
+fi
+
+if [ "$INCLUDE_DEFAULT" = true ]; then
+    log_verbose "Módulos ativos (incluindo padrões): $MODULES"
+else
+    log_verbose "Módulos ativos (sem padrões): $MODULES"
+fi
+
+# Obtém plugins para desabilitar
+PLUGINS_TO_DISABLE=$(get_plugins_to_disable "$MODULES")
+
+# log_verbose "Plugins a desabilitar: ${NC}\n${GRAY}$PLUGINS_TO_DISABLE\n${NC}"
+
+# Executa o comando
+build_and_run_command "$PLUGINS_TO_DISABLE"
